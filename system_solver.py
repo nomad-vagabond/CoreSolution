@@ -1,3 +1,4 @@
+import sys, os
 import math, pickle, warnings, time, json, copy
 import multiprocessing as mp
 import sympy as sy
@@ -9,73 +10,6 @@ _error_msg = {
     0: 'init_vec parameter must represent initial values of variables'
 }
 
-def _sweepsolve(input_list):
-    sweeps, sweep_vars, sol_vars, par_mix, comp_eps = input_list
-    reslist = []
-    sweep_dict = {ss: sv for ss, sv in zip(sweep_vars, sweeps)}
-    tol_res = []
-    for vec in par_mix:
-        try:
-            # res = so.fsolve(_evaluate_lambdified, vec, args=(sweep_dict, sol_vars, _lambdified))
-            res = so.fsolve(_evaluate_wrapper, vec, args=(sweep_dict, sol_vars, _lambdified))
-            res_int = [int(round(r/comp_eps)) for r in res]
-            if res_int not in tol_res:
-                tol_res.append(res_int)
-                sol_dict = {v: r for v, r in zip(sol_vars, res)}
-                # res_dict = dict(sweep_dict, **sol_dict)
-                # res_dict = Solution(sweep_dict, **sol_dict)
-                res_dict = Solution(sweep_dict, sol_dict)
-                reslist.append(res_dict)
-        except: #RuntimeWarning
-            # pass
-            sol_dict = {v: None for v in sol_vars}
-        
-            # res_dict = dict(sweep_dict, **sol_dict)
-            # res_dict = Solution(sweep_dict, **sol_dict)
-            res_dict = Solution(sweep_dict, sol_dict)
-            reslist.append(res_dict)
-            # pass
-    return reslist
-
-# def _evaluate_lambdified(values, sweep_dict, sol_vars, lambdified):
-#     values = map(float, values)
-#     value_dict = dict({s:v for s, v in zip(sol_vars, values)}, **sweep_dict)
-
-#     # warnings.filterwarnings("error")
-#     result = []
-#     for func, param_str in lambdified:
-#         args = [value_dict[varstr] for varstr in param_str]
-#         # print "args:", args
-#         try:
-#             res = func(*args)
-#         except:
-#             res = 1e10
-#         result.append(res)
-#     if len(value_dict) == 1:
-#         return result[0]
-#     else:
-#         return result
-
-def _evaluate(value_dict, lambdified):
-    # warnings.filterwarnings("error")
-    result = []
-    for func, param_str in lambdified:
-        args = [value_dict[varstr] for varstr in param_str]
-        # print "args:", args
-        try:
-            res = func(*args)
-        except:
-            res = 1e10
-        result.append(res)
-    if len(value_dict) == 1:
-        return result[0]
-    else:
-        return result
-
-def _evaluate_wrapper(values, sweep_dict, sol_vars, lambdified):
-    values = map(float, values)
-    value_dict = dict({s:v for s, v in zip(sol_vars, values)}, **sweep_dict)
-    return _evaluate(value_dict, lambdified)
 
 class Solver(object):
     """
@@ -90,36 +24,44 @@ class Solver(object):
     """
     def __init__(self, equations):
 
-        global _lambdified
         self.equations = equations
         self.variables = []
         self.lambdified = []
+        # self.solve_variables = {}
+        self.solve_order = {}
         for i, eq in self.equations.items():
             variables = eq.free_symbols
+            # self.solve_variables[i] = variables
+            solorder = len(variables)
+            if solorder not in self.solve_order:
+                self.solve_order[solorder] = []
+            self.solve_order[solorder].append((i, variables))
             self.lambdified.append([sy.lambdify(variables, eq), variables])
             self.variables += variables
         self.variables = set(self.variables)
-        _lambdified = self.lambdified
 
-    def _evaluate(self, values, sweep_dict):
-        return _evaluate_wrapper(values, sweep_dict, self.sol_vars, self.lambdified)
-
-    def _filter_solutions(self, reslist, constraints):
+    def _filter_solutions(self, reslist, constraints, comp_eps):
         filtered = []
         # hasnone = False
+        tol_res = []
         for res in reslist:
             # res_dict = {v:r for v, r in zip(variables, res)}
             # res_dict = {v:r for v, r in zip(self.sol_vars, res)}
             if None in res.values():
                 filtered.append(res)
             else:
-                satisfy = True
-                for constr in constraints:
-                    # c = const.subs(res_dict)
-                    c = constr.subs(res)
-                    satisfy = satisfy & c
-                if satisfy:
-                    filtered.append(res)
+                # print "res:", res
+                res_int = [int(round(r/comp_eps)) for r in res.values()]
+                if res_int not in tol_res:
+                    tol_res.append(res_int)
+                    satisfy = True
+                    for constr in constraints:
+                        # c = const.subs(res_dict)
+                        c = constr.subs(res)
+                        satisfy = satisfy & c
+                    if satisfy:
+                        filtered.append(res)
+        
         # print "solutions:", solutions
         # print "filtered:", filtered
         return filtered
@@ -144,34 +86,6 @@ class Solver(object):
         elif hasnone:
             return [reslist[0]]
 
-    def _sweep_singlecore(self):
-        results = []
-        for sweeps in self.sw_mix:
-            # sweep_dict = {ss: sv for ss, sv in zip(self.sweep_vars, sweeps)}
-            # res = _sweepsolve(sweep_dict, self.sol_vars, par_mix, self.lambdified, comp_eps)
-            input_list = [sweeps, self.sweep_vars, self.sol_vars, self.par_mix, self.comp_eps]
-            res = _sweepsolve(input_list)
-
-            # print "res:", res
-            results.append(res)
-        return results
-
-    def _sweep_multicore(self):
-        corenums = mp.cpu_count()
-        if corenums > 1: corenums -= 1
-        pool = mp.Pool(processes=corenums)
-        # joblist = [(sweeps, deepcopy(self)) for sweeps in sw_mix]
-        statargs = [self.sweep_vars, self.sol_vars, self.par_mix, self.comp_eps]
-        joblist = [[sweeps] + statargs for sweeps in self.sw_mix]
-        mapresult = pool.map_async(_sweepsolve, joblist)
-        pool.close()
-        pool.join()
-
-        results = []
-        for reslist in mapresult.get():
-            results.append(reslist)
-        return results
-
     def show_res(self):
         if hasattr(self, "results"):
             rescount = 0
@@ -182,43 +96,40 @@ class Solver(object):
                     rescount += 1
             print "Number of solutions found:", rescount
 
-    def solve(self, solve_inits=None, constants={}, constraints=[]):
+    def solve(self, solve_inits=None, frozen={}, constraints=[]):
         """Finds solution for determined system of equations."""
-        warnings.filterwarnings("always")
+
+        import solve
+        reload(solve)
+        solve._lambdified = self.lambdified
 
         if solve_inits is None:
-            init_values = [0.0]*paramnum
-            self.sol_vars = self.variables
+            init_values = [0.0]*len(self.variables)
+            sol_vars = self.variables
         else:
             vs = [(k, v) for k, v in solve_inits.items()]
-            self.sol_vars, init_values = zip(*vs)
-        warnings.filterwarnings("error")
-        # try:
-        res = so.fsolve(self._evaluate, init_values, args=(constants,))
-        res_dict = {v: res[i] for i, v in enumerate(self.sol_vars)}
-        res_nones = {v: None for v in res_dict}
+            sol_vars, init_values = zip(*vs)
+        
+        sol_res = solve.fsolve(init_values, sol_vars, frozen, solve_order=self.solve_order)
+        res_nones = {v: None for v in sol_res}
+        res_dict = Solution(frozen, sol_res)
 
-            # res_dict = dict(constants, **res_dict)
-        # except:
-        #     warnings.filterwarnings("default")
-        #     warnings.warn("Solution hasn't been found")
-        #     res = []
-        #     res_dict = {v: None for v in self.sol_vars}
-        # res_dict = dict(constants, **res_dict)
-        # res_dict = Solution(constants, **res_dict)
-        res_dict = Solution(constants, res_dict)
-
-        satisfy = True
-        for constr in constraints:
-            c = constr.subs(res_dict)
-            satisfy = satisfy & c
-        if satisfy:
-            return res_dict
-        else:
-            return Solution(constants, res_nones)
+        if None in sol_res.values():
+            satisfy = True
+            for constr in constraints:
+                c = constr.subs(res_dict)
+                satisfy = satisfy & c
+            if not satisfy:
+                res_dict = Solution(frozen, res_nones)
+            # else:
+        return res_dict
 
     def evaluate(self, value_dict):
-        return _evaluate(value_dict, self.lambdified)
+        """Evaluates function for a given values of variables"""
+        import solve
+        reload(solve)
+        solve._lambdified = self.lambdified
+        return solve.evaluate(value_dict)
 
     def reduce(self, reducefunc, reducevar=None, resgrid=False, nonereplace=None):
         """Returns value of the input function based on the found solution."""
@@ -268,13 +179,30 @@ class Solver(object):
         return self.sw_grid + [z]
 
     def sweep(self, sweep_vars, sweep_values, solve_inits=None, constraints=[], 
-              minfunc=None, maxfunc=None, comp_eps=1e-4, verbose=True):
+              minfunc=None, maxfunc=None, comp_eps=1e-4, verbose=True, multithread=False):
         """
         Parametric sweep. Finds solution for underdetermined systems based on 
         the input values of excess independent variables.
+
+        Parameters
+        ----------
+        sweep_vars:   variables of parametric sweep
+        sweep_values: list (array) of values for sweep variables
+        solve_inits:  dict of form (variable: value (or array of values)) representing
+                      initial values of independent variables
+        constraints:  list of constraints used to filter solutions (Sympy types)
+        minfunc:      minimization function. Used to select proper better solution if 
+                      more then one solution is found
+        maxfunc:      maximization function. Used to select proper better solution if 
+                      more then one solution is found
+        comp_eps:     solution discrimination threshold (float)
+        verbose:      bool or int, whether or not to print info: 
+                        1 or True - regular output (default)
+                        2 - print extended output
+        multithread:  bool, whether or not use multithreading
         """
 
-        self.comp_eps = comp_eps
+        # self.comp_eps = comp_eps
         self.sweep_vars = sweep_vars
         self.sweep_values = sweep_values
         swnum = len(sweep_vars)
@@ -285,25 +213,30 @@ class Solver(object):
             select_func, criterion = [(minfunc, 'min'), (maxfunc, 'max')][m[0]]
 
         if solve_inits is None:
-            self.par_mix = [[0.0]*paramnum]
+            par_mix = [[0.0]*paramnum]
             self.sol_vars = self.variables - set(sweep_vars)
         elif len(solve_inits) == paramnum:
             vs = [(k, v) for k, v in solve_inits.items()]
             self.sol_vars, init_values = zip(*vs)
-            self.par_mix = np.array(np.meshgrid(*init_values)).T.reshape(-1, paramnum)
+            par_mix = np.array(np.meshgrid(*init_values)).T.reshape(-1, paramnum)
         else:
             raise ValueError(_error_msg[0])
         self.sw_grid = np.meshgrid(*sweep_values)
         self.sw_mix = np.array(self.sw_grid).T.reshape(-1, swnum)
         # self.sw_mix = np.array(np.meshgrid(*sweep_values)).T.reshape(-1, swnum)
 
-        warnings.filterwarnings("always")
-        warnings.filterwarnings("error")
+        # warnings.filterwarnings("always")
+        # warnings.filterwarnings("error")
         if verbose:
             print "Sweep solve started..."
             t = time.time()
-        # results = self._sweep_multicore()
-        results = self._sweep_singlecore()
+
+        import solve
+        reload(solve)
+        solve._lambdified = self.lambdified
+
+        results = solve.sweep_solve(self.sw_mix, sweep_vars, par_mix, self.sol_vars, multithread)
+
         if verbose:
             print "Sweep solve finished in %f seconds." % (time.time() - t)
         warnings.filterwarnings("default")
@@ -311,7 +244,8 @@ class Solver(object):
         filtered_results = []
         for reslist in results:
             if len(constraints) > 0:
-                reslist = self._filter_solutions(reslist, constraints)
+                # print "comp_eps:", comp_eps
+                reslist = self._filter_solutions(reslist, constraints, comp_eps)
             if len(reslist) > 0 and len(m) > 0:
                 reslist = self._select_solution(reslist, select_func, criterion)
             filtered_results.append(reslist)
