@@ -31,7 +31,9 @@ _info_msg = {
 
     'independent': "%d independent variables found: ",
 
-    'redundant':   "%d redundant variables found: ",
+    'redundant': "%d redundant variables found: ",
+
+    'constants': "%d variables marked as constants: ",
 
     'mult': "Redundant variable '%s' has multiple solutions:\n",
 
@@ -124,7 +126,10 @@ class System(object):
         self.shrink_conv = 0
         self.long_varname = 0
 
-        eq_list = sum([obj.equations for obj in objects], constraints)
+        try:
+            eq_list = sum([obj.equations.values() for obj in objects], constraints)
+        except:
+            eq_list = sum([obj.equations for obj in objects], constraints)
         self.equations = {i: eq.subs(subs) for i, eq in enumerate(eq_list)}
         self._copy_equations()
 
@@ -235,13 +240,15 @@ class System(object):
             info_head = _info_msg['head'] % (varnum, len(self.equations), self.dof)
             info_independent = _info_msg['independent'] % len(self.independent)
             info_redundant = _info_msg['redundant'] % redundnum
+            info_constants = _info_msg['constants'] % len(self.constants)
             summary = (info_head + info_independent + str(list(self.independent)) +
-                       '\n' + info_redundant + str(self.free_list))
+                       '\n' + info_redundant + str(self.free_list) + '\n' +
+                       info_constants + str(list(self.constants)))
             print summary
             self.print_equations()
             if verbose == 2 and len(self.sparse) > 0:
                 self.print_sparse()
-            if redundnum > 0:
+            if (redundnum > 0) and (len(self.equations) > 1):
                 print _info_msg['try_shrink']
 
     def _solve(self, eq, var):
@@ -359,7 +366,8 @@ class System(object):
 
     def _adopt(self, res, nonnumeric, extended):
         for var, eq in res.items():
-            res[var] = eq.subs(extended, simultaneous=True).evalf()
+            # res[var] = eq.subs(extended, simultaneous=True).evalf()
+            res[var] = eq.subs(extended)
             try:
                 f = float(res[var])
                 extended[var] = f
@@ -452,6 +460,9 @@ class System(object):
 
         self.redundant = {var: eq.subs(subs_dict, simultaneous=True) 
                           for var, eq in self.redundant.items()}
+
+        self.sparse = {i: (var, eq.subs(subs_dict, simultaneous=True)) 
+                        for i, (var, eq) in self.sparse.items()}                   
         self.inspect()
         # print "self.variables:", self.variables
         
