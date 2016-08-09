@@ -122,7 +122,7 @@ def _find_solutions(input_list):
     sweep_values, sweep_vars, sol_inits, sol_vars = input_list
     reslist = []
     frozen = {ss: sv for ss, sv in zip(sweep_vars, sweep_values)}
-    tol_res = []
+    # tol_res = []
     for vec in sol_inits:
         sol_res = fsolve(vec, sol_vars, frozen)
         reslist.append(Solution(frozen, sol_res))

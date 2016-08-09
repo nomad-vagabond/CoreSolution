@@ -40,7 +40,7 @@ class Solver(object):
             self.variables += variables
         self.variables = set(self.variables)
 
-    def _filter_solutions(self, reslist, constraints, comp_eps):
+    def _filter_solutions(self, reslist, constraints, comp_eps, include_nones=True):
         filtered = []
         # hasnone = False
         tol_res = []
@@ -48,7 +48,8 @@ class Solver(object):
             # res_dict = {v:r for v, r in zip(variables, res)}
             # res_dict = {v:r for v, r in zip(self.sol_vars, res)}
             if None in res.values():
-                filtered.append(res)
+                if include_nones:
+                    filtered.append(res)
             else:
                 # print "res:", res
                 res_int = [int(round(r/comp_eps)) for r in res.values()]
@@ -86,6 +87,22 @@ class Solver(object):
         elif hasnone:
             return [reslist[0]]
 
+    def _mix_inits(self, solve_inits, swnum):
+        paramnum = len(self.variables) - swnum
+
+        if solve_inits is None:
+            # init_values = [[0.0]*len(self.variables)]
+            par_mix = [[0.0]*paramnum]
+            sol_vars = self.variables
+        elif len(solve_inits) == paramnum:
+            vs = [(k, v) for k, v in solve_inits.items()]
+            sol_vars, init_values = zip(*vs)
+            par_mix = np.array(np.meshgrid(*init_values)).T.reshape(-1, paramnum)
+        else:
+            raise ValueError(_error_msg[0])
+
+        return par_mix, sol_vars
+
     def show_res(self):
         if hasattr(self, "results"):
             rescount = 0
@@ -96,33 +113,46 @@ class Solver(object):
                     rescount += 1
             print "Number of solutions found:", rescount
 
-    def solve(self, solve_inits=None, frozen={}, constraints=[]):
+    def solve(self, solve_inits=None, frozen={}, constraints=[], comp_eps=1e-4):
         """Finds solution for determined system of equations."""
 
         import solve
         reload(solve)
         solve._lambdified = self.lambdified
 
-        if solve_inits is None:
-            init_values = [0.0]*len(self.variables)
-            sol_vars = self.variables
-        else:
-            vs = [(k, v) for k, v in solve_inits.items()]
-            sol_vars, init_values = zip(*vs)
+        par_mix, sol_vars = self._mix_inits(solve_inits, len(frozen))
         
-        sol_res = solve.fsolve(init_values, sol_vars, frozen, solve_order=self.solve_order)
-        res_nones = {v: None for v in sol_res}
-        res_dict = Solution(frozen, sol_res)
+        reslist = []
+        for vec in par_mix:
+            sol_res = solve.fsolve(vec, sol_vars, frozen)
+            reslist.append(Solution(frozen, sol_res))
+        # inputlist = [sweep_values, sweep_vars, sol_inits, sol_vars]
+        # res = _find_solutions(inputlist)
 
-        if None in sol_res.values():
-            satisfy = True
-            for constr in constraints:
-                c = constr.subs(res_dict)
-                satisfy = satisfy & c
-            if not satisfy:
-                res_dict = Solution(frozen, res_nones)
-            # else:
-        return res_dict
+        if len(constraints) > 0:
+            # print "comp_eps:", comp_eps
+            reslist = self._filter_solutions(reslist, constraints, comp_eps, include_nones=False)
+
+        # if len(reslist) > 0 and len(m) > 0:
+        #     reslist = self._select_solution(reslist, select_func, criterion)
+ 
+
+        return reslist
+
+
+        # sol_res = solve.fsolve(init_values, sol_vars, frozen, solve_order=self.solve_order)
+        # res_nones = {v: None for v in sol_res}
+        # res_dict = Solution(frozen, sol_res)
+
+        # if None in sol_res.values():
+        #     satisfy = True
+        #     for constr in constraints:
+        #         c = constr.subs(res_dict)
+        #         satisfy = satisfy & c
+        #     if not satisfy:
+        #         res_dict = Solution(frozen, res_nones)
+        #     # else:
+        # return res_dict
 
     def evaluate(self, value_dict):
         """Evaluates function for a given values of variables"""
@@ -179,7 +209,8 @@ class Solver(object):
         return self.sw_grid + [z]
 
     def sweep(self, sweep_vars, sweep_values, solve_inits=None, constraints=[], 
-              minfunc=None, maxfunc=None, comp_eps=1e-4, verbose=True, multithread=False):
+              minfunc=None, maxfunc=None, comp_eps=1e-4, verbose=True, 
+              multithread=False, adopt_syst=None):
         """
         Parametric sweep. Finds solution for underdetermined systems based on 
         the input values of excess independent variables.
@@ -206,21 +237,25 @@ class Solver(object):
         self.sweep_vars = sweep_vars
         self.sweep_values = sweep_values
         swnum = len(sweep_vars)
-        paramnum = len(self.variables) - swnum
+        # paramnum = len(self.variables) - swnum
 
         m = np.nonzero([minfunc is not None, maxfunc is not None])[0]
         if len(m) > 0:
             select_func, criterion = [(minfunc, 'min'), (maxfunc, 'max')][m[0]]
 
-        if solve_inits is None:
-            par_mix = [[0.0]*paramnum]
-            self.sol_vars = self.variables - set(sweep_vars)
-        elif len(solve_inits) == paramnum:
-            vs = [(k, v) for k, v in solve_inits.items()]
-            self.sol_vars, init_values = zip(*vs)
-            par_mix = np.array(np.meshgrid(*init_values)).T.reshape(-1, paramnum)
-        else:
-            raise ValueError(_error_msg[0])
+        # if solve_inits is None:
+        #     par_mix = [[0.0]*paramnum]
+        #     self.sol_vars = self.variables - set(sweep_vars)
+        # elif len(solve_inits) == paramnum:
+        #     vs = [(k, v) for k, v in solve_inits.items()]
+        #     self.sol_vars, init_values = zip(*vs)
+        #     par_mix = np.array(np.meshgrid(*init_values)).T.reshape(-1, paramnum)
+        # else:
+        #     raise ValueError(_error_msg[0])
+
+
+        par_mix, sol_vars = self._mix_inits(solve_inits, swnum)
+
         self.sw_grid = np.meshgrid(*sweep_values)
         self.sw_mix = np.array(self.sw_grid).T.reshape(-1, swnum)
         # self.sw_mix = np.array(np.meshgrid(*sweep_values)).T.reshape(-1, swnum)
@@ -235,11 +270,12 @@ class Solver(object):
         reload(solve)
         solve._lambdified = self.lambdified
 
-        results = solve.sweep_solve(self.sw_mix, sweep_vars, par_mix, self.sol_vars, multithread)
+        # results = solve.sweep_solve(self.sw_mix, sweep_vars, par_mix, self.sol_vars, multithread)
+        results = solve.sweep_solve(self.sw_mix, sweep_vars, par_mix, sol_vars, multithread)
 
         if verbose:
             print "Sweep solve finished in %f seconds." % (time.time() - t)
-        warnings.filterwarnings("default")
+        # warnings.filterwarnings("default")
 
         filtered_results = []
         for reslist in results:

@@ -416,23 +416,27 @@ class System(object):
     def adopt(self, adoptdict, constdict={}, verbose=False, verify_subs=False):
         """Adopts solution and calculates values of all redundant variables."""
         # res = {}
-        nonnumeric = copy.deepcopy(self.redundant)
-        extended = dict(adoptdict, **constdict)
-        res = copy.deepcopy(self.redundant)
         # print "extended before:", extended
         # nn = len(res)
-        for i in range(len(res)):
-            self._adopt(res, nonnumeric, extended)
-            if len(nonnumeric) == 0:
-                break
+        if None in adoptdict.values():
+            return
+        else:
+            nonnumeric = copy.deepcopy(self.redundant)
+            extended = dict(adoptdict, **constdict)
+            res = copy.deepcopy(self.redundant)
 
-        # print "extended after:", extended
-        # for var, rr in res.items():
-        #     print "[%s]:" %str(var), rr
-        
-        res_dict = Solution(adoptdict, res)
-        if verbose: print res_dict
-        return res_dict
+            for i in range(len(res)):
+                self._adopt(res, nonnumeric, extended)
+                if len(nonnumeric) == 0:
+                    break
+
+            # print "extended after:", extended
+            # for var, rr in res.items():
+            #     print "[%s]:" %str(var), rr
+            
+            res_dict = Solution(adoptdict, res)
+            if verbose: print res_dict
+            return res_dict
 
     def subs_safe(self, subs_dict, verbose=False):
         equations = {i: eq.subs(subs_dict, simultaneous=True)
