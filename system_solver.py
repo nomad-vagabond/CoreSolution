@@ -7,7 +7,13 @@ import scipy.optimize as so
 from solution import Solution
 
 _error_msg = {
-    0: 'init_vec parameter must represent initial values of variables'
+    0: 'init_vec parameter must represent initial values of variables',
+    1: 'unknown variable found in the selection criterion expression: '
+}
+
+_info_msg = {
+    0: "Number of solutions found: %d",
+    1: "Sweep solve finished in %f seconds."
 }
 
 
@@ -39,6 +45,8 @@ class Solver(object):
             self.lambdified.append([sy.lambdify(variables, eq), variables])
             self.variables += variables
         self.variables = set(self.variables)
+        self.selector_map = {min: np.argmin, 'min': np.argmin, 
+                             max: np.argmax, 'max': np.argmax}
 
     def _filter_solutions(self, reslist, constraints, comp_eps):
         filtered = []
@@ -50,7 +58,6 @@ class Solver(object):
                     filtered.append(res)
                     hasnone = True
             else:
-                # print "res:", res
                 res_ = Solution({var: float(val) for var, val in res.items()})
                 # res_ = res
                 res_int = [int(round(r/comp_eps)) for r in res_.values()]
@@ -67,13 +74,12 @@ class Solver(object):
                             filtered.append(res_)
                     else:
                         filtered.append(res_)
-        
-        # print "solutions:", solutions
-        # print "filtered:", filtered
         return filtered
 
-    def _select_solution(self, reslist, expression, criterion):
-        # variables = sy.symbols(self.vals_str)
+    def _select_solution(self, reslist, expression, criterion, system):
+        if system is not None:
+            redundant_varset = set(system.redundant.keys())
+
         target = []
         hasnone = False
         nonempty = []
@@ -82,12 +88,26 @@ class Solver(object):
             if None in res.values(): 
                 hasnone = True
             else:
-                subs_exp = expression.subs(res)
-                target.append(subs_exp.evalf())
+                res_ = res
+                variables = expression.free_symbols
+                notinres = variables - set(res.keys())
+
+                if len(notinres) > 0: 
+                    if system is not None:
+                        unknowns = len(notinres - redundant_varset)
+                        if not unknowns:
+                            res_ = system.adopt(res)[0]
+                        else:
+                            raise ValueError(_error_msg[1] + str(inredundant))
+                    else:
+                        raise ValueError(_error_msg[1] + str(notinres))
+
+                subs_exp = expression.subs(res_).evalf()
+                target.append(float(subs_exp))
                 nonempty.append(res)
 
         if len(target) > 0:
-            exec 'i = np.arg%s(target)' % criterion
+            i = criterion(target)
             return [nonempty[i]]
         elif hasnone:
             return [reslist[0]]
@@ -96,7 +116,6 @@ class Solver(object):
         paramnum = len(self.variables) - swnum
 
         if solve_inits is None:
-            # init_values = [[0.0]*len(self.variables)]
             par_mix = [[0.0]*paramnum]
             sol_vars = self.variables
         elif len(solve_inits) == paramnum:
@@ -108,7 +127,7 @@ class Solver(object):
 
         return par_mix, sol_vars
 
-    def show_res(self):
+    def show_res(self, with_empty=False):
         if hasattr(self, "results"):
             rescount = 0
             for res_dict in self.results:
@@ -116,51 +135,60 @@ class Solver(object):
                 if None not in res_dict.values():
                     print res_dict
                     rescount += 1
-            print "Number of solutions found:", rescount
+                elif with_empty:
+                    print res_dict
+            # print "Number of solutions found:", rescount
+            print _info_msg[0] % rescount
 
-    def solve(self, solve_inits=None, frozen={}, constraints=[], comp_eps=1e-4):
-        """Finds solution for determined system of equations."""
+    def solve(self, solve_inits=None, frozen={}, constraints=[], comp_eps=1e-4,
+              system=None, select_expr=None, select_criterion=None):
+        """
+        Finds solution for determined or undetermined systems of equations using
+        initial values of independent variables and frozen falues of excess variables.
+ 
+        Parameters
+        ----------
+        solve_inits:      dict of form (variable: value (or array of values))
+                          representing initial values of independent variables
 
+        frozen:           dict of form (excess variable: value)
+
+        constraints:      list of constraints used to filter solutions (Sympy types)
+
+        comp_eps:         solution discrimination threshold (float)
+
+        system:           equation system. Used to find values of additional variables
+                          if they are present in solution celection expression
+
+        select_expr:      expression used to select one of several possible solutions 
+                          that satisfy constraints
+
+        select_criterion: min or max - solution selection criterion. Used to select
+                          best solution if several are found
+
+        """
+
+        # Prepare
         import solve
         reload(solve)
         solve._lambdified = self.lambdified
-
+        criterion = self.selector_map.get(select_criterion, None)
         par_mix, sol_vars = self._mix_inits(solve_inits, len(frozen))
         
+        # Solve
         reslist = []
         for vec in par_mix:
             sol_res = solve.fsolve(vec, sol_vars, frozen)
             reslist.append(Solution(frozen, sol_res))
-        # inputlist = [sweep_values, sweep_vars, sol_inits, sol_vars]
-        # res = _find_solutions(inputlist)
 
-
+        # Filter
         # reslist = self._compare_solutions(reslist, comp_eps)
-
-        # if len(constraints) > 0:
-            # print "comp_eps:", comp_eps
         reslist = self._filter_solutions(reslist, constraints, comp_eps)
 
-        # if len(reslist) > 0 and len(m) > 0:
-        #     reslist = self._select_solution(reslist, select_func, criterion)
+        if len(reslist) > 0 and criterion is not None:
+            reslist = self._select_solution(reslist, select_expr, criterion, system)
  
-
         return reslist
-
-
-        # sol_res = solve.fsolve(init_values, sol_vars, frozen, solve_order=self.solve_order)
-        # res_nones = {v: None for v in sol_res}
-        # res_dict = Solution(frozen, sol_res)
-
-        # if None in sol_res.values():
-        #     satisfy = True
-        #     for constr in constraints:
-        #         c = constr.subs(res_dict)
-        #         satisfy = satisfy & c
-        #     if not satisfy:
-        #         res_dict = Solution(frozen, res_nones)
-        #     # else:
-        # return res_dict
 
     def evaluate(self, value_dict):
         """Evaluates function for a given values of variables"""
@@ -169,7 +197,84 @@ class Solver(object):
         solve._lambdified = self.lambdified
         return solve.evaluate(value_dict)
 
-    def reduce(self, reducefunc, reducevar=None, resgrid=False, nonereplace=None):
+    def sweep(self, sweep_vars, sweep_values, solve_inits=None, constraints=[], 
+              system=None, select_expr=None, select_criterion=None,
+              comp_eps=1e-4, verbose=True, multithread=False):
+        """
+        Parametric sweep. Finds solution for underdetermined systems based on 
+        the input values of excess independent variables.
+
+        Parameters
+        ----------
+        sweep_vars:       variables of parametric sweep
+
+        sweep_values:     list (array) of values for sweep variables
+
+        solve_inits:      dict of form (variable: value (or array of values))
+                          representing initial values of independent variables
+
+        constraints:      list of constraints used to filter solutions (Sympy types)
+
+        system:           equation system. Used to find values of additional variables
+                          if they are present in solution celection expression
+
+        select_expr:      expression used to select one of several possible solutions 
+                          that satisfy constraints
+
+        select_criterion: min or max - solution selection criterion. Used to select
+                          best solution if several are found
+
+        comp_eps:         solution discrimination threshold (float)
+
+        verbose:          whether or not to print info: 
+                              1 or True - regular output (default)
+                              2 - print extended output
+
+        multithread:      bool, whether or not use multithreading
+        """
+
+        # Prepare
+        self.sweep_vars = sweep_vars
+        self.sweep_values = sweep_values
+        swnum = len(sweep_vars)
+        criterion = self.selector_map.get(select_criterion, None)
+        par_mix, sol_vars = self._mix_inits(solve_inits, swnum)
+        self.sw_grid = np.meshgrid(*sweep_values)
+        self.sw_mix = np.array(self.sw_grid).T.reshape(-1, swnum)
+        # self.sw_mix = np.array(np.meshgrid(*sweep_values)).T.reshape(-1, swnum)
+
+        # Sweep
+        if verbose:
+            print "Sweep solve started..."
+            t = time.time()
+
+        import solve
+        reload(solve)
+        solve._lambdified = self.lambdified
+        results = solve.sweep_solve(self.sw_mix, sweep_vars, par_mix, sol_vars, multithread)
+
+        if verbose:
+            # print "Sweep solve finished in %f seconds." % (time.time() - t)
+            print _info_msg[1] % (time.time() - t)
+        # warnings.filterwarnings("default")
+
+        #Filter
+        filtered_results = []
+        for reslist in results:
+            reslist = self._filter_solutions(reslist, constraints, comp_eps)
+
+            if len(reslist) > 0 and criterion is not None:
+                reslist = self._select_solution(reslist, select_expr, criterion, system)
+            filtered_results.append(reslist)
+        
+        joinres = sum([reslist for reslist in filtered_results], [])
+        self.results = joinres
+        
+        return joinres
+
+
+    # Deprecated and probably broken
+    def reduce(self, reducefunc, reducevar=None, resgrid=False, nonereplace=None): 
         """Returns value of the input function based on the found solution."""
         if reducevar is None:
             reducevar = sy.Symbol('reduced')
@@ -216,90 +321,8 @@ class Solver(object):
         z = z.reshape(tuple(reversed(dims))).T
         return self.sw_grid + [z]
 
-    def sweep(self, sweep_vars, sweep_values, solve_inits=None, constraints=[], 
-              minfunc=None, maxfunc=None, comp_eps=1e-4, verbose=True, 
-              multithread=False, adopt_syst=None):
-        """
-        Parametric sweep. Finds solution for underdetermined systems based on 
-        the input values of excess independent variables.
 
-        Parameters
-        ----------
-        sweep_vars:   variables of parametric sweep
-        sweep_values: list (array) of values for sweep variables
-        solve_inits:  dict of form (variable: value (or array of values)) representing
-                      initial values of independent variables
-        constraints:  list of constraints used to filter solutions (Sympy types)
-        minfunc:      minimization function. Used to select proper better solution if 
-                      more then one solution is found
-        maxfunc:      maximization function. Used to select proper better solution if 
-                      more then one solution is found
-        comp_eps:     solution discrimination threshold (float)
-        verbose:      bool or int, whether or not to print info: 
-                        1 or True - regular output (default)
-                        2 - print extended output
-        multithread:  bool, whether or not use multithreading
-        """
-
-        # self.comp_eps = comp_eps
-        self.sweep_vars = sweep_vars
-        self.sweep_values = sweep_values
-        swnum = len(sweep_vars)
-        # paramnum = len(self.variables) - swnum
-
-        m = np.nonzero([minfunc is not None, maxfunc is not None])[0]
-        if len(m) > 0:
-            select_func, criterion = [(minfunc, 'min'), (maxfunc, 'max')][m[0]]
-
-        # if solve_inits is None:
-        #     par_mix = [[0.0]*paramnum]
-        #     self.sol_vars = self.variables - set(sweep_vars)
-        # elif len(solve_inits) == paramnum:
-        #     vs = [(k, v) for k, v in solve_inits.items()]
-        #     self.sol_vars, init_values = zip(*vs)
-        #     par_mix = np.array(np.meshgrid(*init_values)).T.reshape(-1, paramnum)
-        # else:
-        #     raise ValueError(_error_msg[0])
-
-
-        par_mix, sol_vars = self._mix_inits(solve_inits, swnum)
-
-        self.sw_grid = np.meshgrid(*sweep_values)
-        self.sw_mix = np.array(self.sw_grid).T.reshape(-1, swnum)
-        # self.sw_mix = np.array(np.meshgrid(*sweep_values)).T.reshape(-1, swnum)
-
-        # warnings.filterwarnings("always")
-        # warnings.filterwarnings("error")
-        if verbose:
-            print "Sweep solve started..."
-            t = time.time()
-
-        import solve
-        reload(solve)
-        solve._lambdified = self.lambdified
-
-        # results = solve.sweep_solve(self.sw_mix, sweep_vars, par_mix, self.sol_vars, multithread)
-        results = solve.sweep_solve(self.sw_mix, sweep_vars, par_mix, sol_vars, multithread)
-
-        if verbose:
-            print "Sweep solve finished in %f seconds." % (time.time() - t)
-        # warnings.filterwarnings("default")
-
-        filtered_results = []
-        for reslist in results:
-            if len(constraints) > 0:
-                # print "comp_eps:", comp_eps
-                reslist = self._filter_solutions(reslist, constraints, comp_eps)
-            if len(reslist) > 0 and len(m) > 0:
-                reslist = self._select_solution(reslist, select_func, criterion)
-            filtered_results.append(reslist)
-        
-        # filtered_results = results
-        # print "filtered_results:", filtered_results
-        joinres = sum([reslist for reslist in filtered_results], [])
-        self.results = joinres
-        
-        return joinres
+    # _____________________________________________________________________
 
     # def _compare_solutions(self, reslist, comp_eps):
     #     compared = []

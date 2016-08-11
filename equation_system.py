@@ -421,7 +421,7 @@ class System(object):
                 nonedict = {var: None for var in self.redundant}
                 res_dict = Solution(res, nonedict)
             else:
-                res_extend = res
+                res_extend = copy.deepcopy(res)
                 for convars in self.adopt_order:
                     for var in convars:
                         func, variables = self.lambdified[var]
@@ -431,7 +431,6 @@ class System(object):
                         except:
                             # lambdified doesn't handle complex output
                             subsres = self.redundant[var].subs(res_extend)
-                            # res_extend[var] = complex(subsres)
 
                             converted = complex(subsres.evalf())
                             # print "got complex"
@@ -443,7 +442,6 @@ class System(object):
 
             adopted.append(res_dict)
             if verbose: print res_dict
-                # return res_dict
         return adopted
 
     def inspect(self):
