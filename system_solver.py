@@ -40,28 +40,33 @@ class Solver(object):
             self.variables += variables
         self.variables = set(self.variables)
 
-    def _filter_solutions(self, reslist, constraints, comp_eps, include_nones=True):
+    def _filter_solutions(self, reslist, constraints, comp_eps):
         filtered = []
-        # hasnone = False
+        hasnone = False
         tol_res = []
         for res in reslist:
-            # res_dict = {v:r for v, r in zip(variables, res)}
-            # res_dict = {v:r for v, r in zip(self.sol_vars, res)}
             if None in res.values():
-                if include_nones:
+                if not hasnone:
                     filtered.append(res)
+                    hasnone = True
             else:
                 # print "res:", res
-                res_int = [int(round(r/comp_eps)) for r in res.values()]
+                res_ = Solution({var: float(val) for var, val in res.items()})
+                # res_ = res
+                res_int = [int(round(r/comp_eps)) for r in res_.values()]
                 if res_int not in tol_res:
                     tol_res.append(res_int)
-                    satisfy = True
-                    for constr in constraints:
-                        # c = const.subs(res_dict)
-                        c = constr.subs(res)
-                        satisfy = satisfy & c
-                    if satisfy:
-                        filtered.append(res)
+
+                    if len(constraints) > 0:
+                        satisfy = True
+                        for constr in constraints:
+                            # c = const.subs(res_dict)
+                            c = constr.subs(res_)
+                            satisfy = satisfy & c
+                        if satisfy:
+                            filtered.append(res_)
+                    else:
+                        filtered.append(res_)
         
         # print "solutions:", solutions
         # print "filtered:", filtered
@@ -129,9 +134,12 @@ class Solver(object):
         # inputlist = [sweep_values, sweep_vars, sol_inits, sol_vars]
         # res = _find_solutions(inputlist)
 
-        if len(constraints) > 0:
+
+        # reslist = self._compare_solutions(reslist, comp_eps)
+
+        # if len(constraints) > 0:
             # print "comp_eps:", comp_eps
-            reslist = self._filter_solutions(reslist, constraints, comp_eps, include_nones=False)
+        reslist = self._filter_solutions(reslist, constraints, comp_eps)
 
         # if len(reslist) > 0 and len(m) > 0:
         #     reslist = self._select_solution(reslist, select_func, criterion)
@@ -293,3 +301,32 @@ class Solver(object):
         
         return joinres
 
+    # def _compare_solutions(self, reslist, comp_eps):
+    #     compared = []
+    #     tol_res = []
+    #     hasnone = False
+    #     for res in reslist:
+    #         if None in res.values():
+    #             if not hasnone:
+    #                 compared.append(res)
+    #                 hasnone = True
+    #         else:
+    #             # for val in res.values():
+    #             #     print "resval_type:", type(val)
+    #             res_ = Solution({var: float(val) for var, val in res.items()})
+    #             res_int = [int(round(r/comp_eps)) for r in res_.values()]
+    #             if res_int not in tol_res:
+    #                 tol_res.append(res_int)
+    #                 compared.append(res_)
+    #     return compared
+
+    # def _filter_solutions0(self, reslist, constraints):
+    #     filtered = []
+    #     for res in reslist:
+    #         satisfy = True
+    #         for constr in constraints:
+    #             c = constr.subs(res)
+    #             satisfy = satisfy & c
+    #         if satisfy:
+    #             filtered.append(res)
+    #     return filtered

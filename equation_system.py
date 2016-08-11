@@ -364,18 +364,87 @@ class System(object):
 
         return list(set(free) - set(self.constants))
 
-    def _adopt(self, res, nonnumeric, extended):
-        for var, eq in res.items():
-            # res[var] = eq.subs(extended, simultaneous=True).evalf()
-            res[var] = eq.subs(extended)
-            try:
-                f = float(res[var])
-                extended[var] = f
-                # del nonnumeric[var]
-                nonnumeric.pop()
-            except: 
-                # nonnumeric[var] = eq
-                pass
+    def _find_adopt_order(self, redundant, sol_vars, converged):
+        # converged = {}
+        convars = []
+        # sol_vars = res.keys()
+        sol_vars_set = set(sol_vars)
+        for var, eq in redundant.items():
+            variables = eq.free_symbols - sol_vars_set
+            if len(variables) == 0:
+                converged[var] = [s for s in sol_vars]
+                convars.append(var)
+                del redundant[var]
+                sol_vars.append(var)
+        return convars
+
+    def _adopt_order(self):
+        # fake_res = {var: 1 for var in self.independent}
+        sol_vars = list(self.independent)
+        # nonnumeric = {var: 1 for var in self.redundant}
+        redundant = copy.deepcopy(self.redundant)
+        # maxiternum = range(len(redundant))
+        self.adopt_order = []
+        self.converged = {}
+        # for i in maxiternum:
+        for v in self.redundant:
+            convars = self._find_adopt_order(redundant, sol_vars, self.converged)
+            if len(convars) == 0:
+                break
+            else:
+                self.adopt_order.append(convars)
+
+    def lambdify_redundant(self):
+        self._adopt_order()
+        self.lambdified = {}
+        for var, variables in self.converged.items():
+            eq = self.redundant[var]
+            self.lambdified[var] = [sy.lambdify(variables, eq), variables]
+
+    def adopt(self, result, verbose=False):
+        """Adopts solution and calculates values of all redundant variables."""
+
+        if not hasattr(self, 'lambdified'):
+            self.lambdify_redundant()
+
+        if type(result) in [list, tuple]:
+            reslist = result
+        elif type(result) in (Solution, dict):
+            reslist = [result]
+        else:
+            raise ValueError("adoptdict type must represent solution or list of solutions")
+
+        adopted = []
+        for res in reslist:
+
+            if None in res.values():
+                nonedict = {var: None for var in self.redundant}
+                res_dict = Solution(res, nonedict)
+            else:
+                res_extend = res
+                for convars in self.adopt_order:
+                    for var in convars:
+                        func, variables = self.lambdified[var]
+                        values = [res_extend[v] for v in variables]
+                        try:
+                            res_extend[var] = func(*values)
+                        except:
+                            # lambdified doesn't handle complex output
+                            subsres = self.redundant[var].subs(res_extend)
+                            # res_extend[var] = complex(subsres)
+
+                            converted = complex(subsres.evalf())
+                            # print "got complex"
+                            if converted.imag == 0:
+                                res_extend[var] = converted.real
+                            else:
+                                res_extend[var] = converted
+                res_dict = Solution(res_extend)
+
+            adopted.append(res_dict)
+            if verbose: print res_dict
+                # return res_dict
+        return adopted
 
     def inspect(self):
         variables = [ list(eq.atoms(sy.Symbol)) for eq in self.equations.values() ]
@@ -413,46 +482,6 @@ class System(object):
         # if self.redundnum > 0 and conv!=0:
         #     self.shrink_conv = self.redundnum
         #     self.shrink()
-
-    def adopt(self, result, constdict={}, verbose=False, verify_subs=False):
-        """Adopts solution and calculates values of all redundant variables."""
-
-        if type(result) in [list, tuple]:
-            reslist = result
-        elif type(result) in (Solution, dict):
-            reslist = [result]
-        else:
-            raise ValueError("adoptdict type must represent solution or list of solutions")
-
-        adopted = []
-        for res in reslist:
-
-            if None in res.values():
-                nonedict = {var: None for var in self.redundant}
-                res_dict = Solution(res, nonedict)
-                # pass
-            else:
-                # nonnumeric = copy.deepcopy(self.redundant)
-                nonnumeric = range(len(self.redundant))
-                # extended = dict(res, **constdict)
-                extended = res
-                tosolve = copy.deepcopy(self.redundant)
-
-                for i in range(len(tosolve)):
-                    self._adopt(tosolve, nonnumeric, extended)
-                    if len(nonnumeric) == 0:
-                        break
-
-                # print "extended after:", extended
-                # for var, rr in tosolve.items():
-                #     print "[%s]:" %str(var), rr
-                
-                res_dict = Solution(res, tosolve)
-
-            adopted.append(res_dict)
-            if verbose: print res_dict
-                # return res_dict
-        return adopted
 
     def subs_safe(self, subs_dict, verbose=False):
         equations = {i: eq.subs(subs_dict, simultaneous=True)
@@ -556,3 +585,86 @@ class System(object):
             print "[%d]:  " % i, eq
         print
 
+
+
+
+
+    # def _adopt(self, res, nonnumeric, extended): # REMOVE IT
+    #     for var, eq in res.items():
+    #         # res[var] = eq.subs(extended, simultaneous=True).evalf()
+    #         res[var] = eq.subs(extended)
+    #         try:
+    #             f = float(res[var])
+    #             extended[var] = f
+    #             del nonnumeric[var]
+    #             # nonnumeric.pop()
+    #         except: 
+    #             # nonnumeric[var] = eq
+    #             pass
+
+    # def _adopt2(self, redundant, nonnumeric, res, converged):
+    #     # converged = {}
+    #     convars = []
+    #     sol_vars = res.keys()
+    #     for var, eq in redundant.items():
+    #         variables = sol_vars + list(eq.free_symbols)
+    #         # res[var] = eq.subs(extended, simultaneous=True).evalf()
+    #         redundant[var] = eq.subs(res).evalf()
+    #         try:
+    #             f = complex(redundant[var])
+    #             print "got complex"
+    #             if f.imag == 0:
+    #                 res[var] = f.real
+    #             else:
+    #                 res[var] = f
+    #             # del nonnumeric[var]
+    #             del redundant[var]
+    #             converged[var] = variables
+    #             convars.append(var)
+    #             # nonnumeric.pop()
+    #         except: 
+    #             # nonnumeric[var] = eq
+    #             pass
+    #     return convars
+
+    # def adopt(self, result, constdict={}, verbose=False, verify_subs=False):  # REMOVE IT
+    #     """Adopts solution and calculates values of all redundant variables."""
+
+    #     if type(result) in [list, tuple]:
+    #         reslist = result
+    #     elif type(result) in (Solution, dict):
+    #         reslist = [result]
+    #     else:
+    #         raise ValueError("adoptdict type must represent solution or list of solutions")
+
+    #     adopted = []
+    #     for res in reslist:
+
+    #         if None in res.values():
+    #             nonedict = {var: None for var in self.redundant}
+    #             res_dict = Solution(res, nonedict)
+    #             # pass
+    #         else:
+    #             # nonnumeric = copy.deepcopy(self.redundant)
+    #             nonnumeric = {var: 1 for var in self.redundant}
+    #             # nonnumeric = range(len(self.redundant))
+    #             # extended = dict(res, **constdict)
+    #             extended = res
+    #             tosolve = copy.deepcopy(self.redundant)
+
+    #             for i in range(len(tosolve)):
+    #                 self._adopt(tosolve, nonnumeric, extended)
+    #                 if len(nonnumeric) == 0:
+    #                     # print "break", len(nonnumeric), len(self.redundant)
+    #                     break
+
+    #             # print "extended after:", extended
+    #             # for var, rr in tosolve.items():
+    #             #     print "[%s]:" %str(var), rr
+                
+    #             res_dict = Solution(res, tosolve)
+
+    #         adopted.append(res_dict)
+    #         if verbose: print res_dict
+    #             # return res_dict
+    #     return adopted
