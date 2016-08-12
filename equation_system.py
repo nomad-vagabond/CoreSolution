@@ -365,9 +365,7 @@ class System(object):
         return list(set(free) - set(self.constants))
 
     def _find_adopt_order(self, redundant, sol_vars, converged):
-        # converged = {}
         convars = []
-        # sol_vars = res.keys()
         sol_vars_set = set(sol_vars)
         for var, eq in redundant.items():
             variables = eq.free_symbols - sol_vars_set
@@ -379,14 +377,11 @@ class System(object):
         return convars
 
     def _adopt_order(self):
-        # fake_res = {var: 1 for var in self.independent}
-        sol_vars = list(self.independent)
-        # nonnumeric = {var: 1 for var in self.redundant}
+        from_sparse = [sp[0] for sp in self.sparse.values()]
+        sol_vars = list(self.independent) + from_sparse
         redundant = copy.deepcopy(self.redundant)
-        # maxiternum = range(len(redundant))
         self.adopt_order = []
         self.converged = {}
-        # for i in maxiternum:
         for v in self.redundant:
             convars = self._find_adopt_order(redundant, sol_vars, self.converged)
             if len(convars) == 0:
