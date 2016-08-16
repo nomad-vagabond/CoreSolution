@@ -253,17 +253,21 @@ class System(object):
 
     def _solve(self, eq, var):
         c = eq.coeff(var)
-        extracted = eq - c*var
-        if var not in list(extracted.free_symbols):
-            return extracted/abs(c)
-        else:
-            warnings.filterwarnings("always")
-            sol = sy.solve(eq, var)
-            if len(sol) > 1:
-                self.multisols[var] = sol
-                warnings.warn(_warn_msg[1])
-                print _info_msg['mult'] % str(var), sol, _info_msg['mult_']
-            return sol[-1]
+        try:
+            cf = float(c)
+            extracted = eq - c*var
+            if var not in list(extracted.free_symbols):
+                return extracted/abs(c)
+        except: pass
+            # warnings.filterwarnings("always")
+        # print "var:", var
+        # print "equation:", eq
+        sol = sy.solve(eq, var)
+        if len(sol) > 1:
+            self.multisols[var] = sol
+            warnings.warn(_warn_msg[1])
+            print _info_msg['mult'] % str(var), sol, _info_msg['mult_']
+        return sol[-1]
             # return sy.solve(eq, var)
 
     def _compress(self):
