@@ -178,7 +178,10 @@ class Solver(object):
         # Solve
         reslist = []
         for vec in par_mix:
-            sol_res = solve.fsolve(vec, sol_vars, frozen)
+            if len(self.solve_order) > 0:
+                sol_res = solve.fsolve(vec, sol_vars, frozen, solve_order=self.solve_order)
+            else:
+                sol_res = solve.fsolve(vec, sol_vars, frozen)
             reslist.append(Solution(frozen, sol_res))
 
         # Filter
